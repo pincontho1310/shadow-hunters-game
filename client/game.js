@@ -1,10 +1,11 @@
 /**
  * Shadow Hunters - Client (Mobile Portrait) - Tiếng Việt
+ * Đầy đủ: thoát phòng, chơi lại, xúc xắc, 1 rút bài/lượt, di chuyển mỗi lượt,
+ * 1 tấn công/lượt, 3 vùng, thẻ tay/trang bị
  */
 const socket = io();
 
 let state = {
-  screen: 'lobby',
   roomId: null,
   playerId: null,
   isHost: false,
@@ -47,8 +48,34 @@ function showRoom() {
   lobby.classList.add('hidden');
   roomEl.classList.remove('hidden');
   gameEl.classList.add('hidden');
+  $('#winOverlay').classList.add('hidden');
   renderRoom();
 }
+
+function leaveToLobby() {
+  if (state.roomId) socket.emit('leave_room');
+  state.roomId = null;
+  state.playerId = null;
+  state.room = null;
+  state.game = null;
+  gameEl.classList.add('hidden');
+  roomEl.classList.add('hidden');
+  lobby.classList.remove('hidden');
+  $('#winOverlay').classList.add('hidden');
+  const chat = $('#chatBox');
+  if (chat) chat.innerHTML = '';
+}
+
+$('#btnLeaveRoom').onclick = leaveToLobby;
+$('#btnLeaveGame').onclick = leaveToLobby;
+$('#btnLeaveAfter').onclick = leaveToLobby;
+$('#btnNewRoom').onclick = leaveToLobby;
+$('#btnPlayAgain').onclick = () => {
+  socket.emit('play_again');
+  $('#winOverlay').classList.add('hidden');
+};
+
+socket.on('left_room', () => leaveToLobby());
 
 function renderRoom() {
   if (!state.room) return;
@@ -99,12 +126,47 @@ socket.on('game_start', (gs) => {
   state.game = gs;
   roomEl.classList.add('hidden');
   gameEl.classList.remove('hidden');
+  $('#winOverlay').classList.add('hidden');
   renderGame();
 });
 
 socket.on('game_update', (gs) => {
   state.game = gs;
   renderGame();
+});
+
+socket.on('dice_roll', ({ playerName, d6, d4, total }) => {
+  const overlay = $('#diceOverlay');
+  if (!overlay) return;
+  $('#diceLabel').textContent = `${playerName} tung xúc xắc...`;
+  const die6 = $('#die6');
+  const die4 = $('#die4');
+  die6.textContent = '?';
+  die4.textContent = '?';
+  $('#diceTotal').textContent = '';
+  overlay.classList.remove('hidden');
+  die6.style.animation = 'none';
+  void die6.offsetWidth;
+  die6.style.animation = 'diceShake 0.45s ease-in-out';
+  die4.style.animation = 'none';
+  void die4.offsetWidth;
+  die4.style.animation = 'diceShake 0.45s ease-in-out';
+
+  let n = 0;
+  const iv = setInterval(() => {
+    die6.textContent = Math.floor(Math.random() * 6) + 1;
+    die4.textContent = Math.floor(Math.random() * 4) + 1;
+    n++;
+    if (n > 10) {
+      clearInterval(iv);
+      die6.textContent = d6;
+      die4.textContent = d4;
+      let txt = `Tổng: ${total}`;
+      if (total === 7) txt += ' → chọn vùng bất kỳ!';
+      $('#diceTotal').textContent = txt;
+      setTimeout(() => overlay.classList.add('hidden'), 1600);
+    }
+  }, 70);
 });
 
 function renderGame() {
@@ -122,20 +184,35 @@ function renderGame() {
     $('#myFaction').className = 'faction-' + (me.faction || '');
     $('#myHp').textContent = `HP ${me.maxHp - me.damage}/${me.maxHp}`;
     $('#myWin').textContent = 'Thắng: ' + (me.character ? (CHAR_WINS[me.character] || '') : '???');
-    $('#myAbility').textContent = me.character ? (CHAR_ABILITIES[me.character] || '') : '';
+    let ab = me.character ? (CHAR_ABILITIES[me.character] || '') : '';
+    if (me.equipment && me.equipment.length) ab += ' | TB: ' + me.equipment.map(e => e.name).join(', ');
+    if (me.hand && me.hand.length) ab += ' | Tay: ' + me.hand.map(h => h.name).join(', ');
+    $('#myAbility').textContent = ab;
   }
 
   const board = $('#board');
   board.innerHTML = '';
   const pairs = g.pairs || [];
-  pairs.forEach((pair) => {
+  const zoneColors = ['#e94560', '#3498db', '#2ecc71'];
+  pairs.forEach((pair, zi) => {
+    const zoneWrap = document.createElement('div');
+    zoneWrap.className = 'zone-wrap';
+    zoneWrap.style.borderColor = zoneColors[zi % 3];
+    const zLabel = document.createElement('div');
+    zLabel.className = 'zone-label';
+    zLabel.style.color = zoneColors[zi % 3];
+    zLabel.textContent = `Vùng ${zi + 1} (tấn công trong vùng)`;
+    zoneWrap.appendChild(zLabel);
+    const row = document.createElement('div');
+    row.className = 'zone-row';
     pair.forEach(areaId => {
       const area = g.areas.find(a => a.id === areaId);
       if (!area) return;
-      const tokens = g.players.filter(p => p.alive && p.location === areaId);
+      const tokens = g.players.filter(pl => pl.alive && pl.location === areaId);
       const isMeHere = tokens.some(t => t.id === g.myId);
       const div = document.createElement('div');
       div.className = 'area-card' + (isMeHere ? ' active-me' : '');
+      div.style.borderColor = isMeHere ? '#f5a623' : zoneColors[zi % 3] + '88';
       div.innerHTML = `
         <div class="area-nums">${area.numbers.join(' · ')}</div>
         <div class="area-name">${area.name}</div>
@@ -144,8 +221,10 @@ function renderGame() {
           `<div class="token" style="background:${t.color}" title="${t.name}"></div>`
         ).join('')}</div>
       `;
-      board.appendChild(div);
+      row.appendChild(div);
     });
+    zoneWrap.appendChild(row);
+    board.appendChild(zoneWrap);
   });
 
   const strip = $('#playersStrip');
@@ -251,43 +330,64 @@ function renderActions(g, me, isMe) {
     return;
   }
 
-  const hasLoc = me.location != null;
-  if (!hasLoc) {
-    btns.innerHTML = `<button class="btn primary" id="actMove">🎲 Di chuyển</button>`;
-    $('#actMove').onclick = () => doMove();
-  } else {
-    btns.innerHTML = `
-      <button class="btn" id="actArea">📍 Hành động vùng</button>
-      <button class="btn" id="actAttack">⚔️ Tấn công</button>
-      <button class="btn" id="actEnd">✅ Kết thúc lượt</button>
-      <button class="btn" id="actReveal2">👁️ Tiết lộ nhân vật</button>
-    `;
-    $('#actArea').onclick = () => doAction('area_action');
-    $('#actAttack').onclick = () => openAttackModal(g, me);
-    $('#actEnd').onclick = () => doAction('end_turn');
-    $('#actReveal2').onclick = () => doAction('reveal');
+  const hasMoved = !!me.hasMovedThisTurn;
+  const hasArea = !!me.hasAreaActionThisTurn;
+  const hasAttacked = !!me.hasAttackedThisTurn;
 
-    if (['Franklin', 'George', 'Fu-ka', 'Ellen', 'Ultra Soul'].includes(me.character) && !me.abilityUsed && !me.abilityDisabled) {
+  if (!hasMoved) {
+    btns.innerHTML = `<button class="btn primary" id="actMove">🎲 Di chuyển (bắt buộc)</button>`;
+    $('#actMove').onclick = () => doMove();
+    return;
+  }
+
+  let html = '';
+  if (!hasArea) html += `<button class="btn" id="actArea">📜 Rút bài</button>`;
+  if (!hasAttacked) html += `<button class="btn" id="actAttack">⚔️ Tấn công</button>`;
+  html += `
+    <button class="btn" id="actEnd">✅ Kết thúc lượt</button>
+    <button class="btn" id="actReveal2">👁️ Tiết lộ nhân vật</button>
+  `;
+  btns.innerHTML = html;
+
+  if (!hasArea && $('#actArea')) $('#actArea').onclick = () => doAction('area_action');
+  if (!hasAttacked && $('#actAttack')) $('#actAttack').onclick = () => openAttackModal(g, me);
+  $('#actEnd').onclick = () => doAction('end_turn');
+  $('#actReveal2').onclick = () => doAction('reveal');
+
+  if (['Franklin', 'George', 'Fu-ka', 'Ellen', 'Ultra Soul'].includes(me.character) && !me.abilityUsed && !me.abilityDisabled) {
+    const b = document.createElement('button');
+    b.className = 'btn primary';
+    b.textContent = '✨ Kỹ năng ' + me.character;
+    b.onclick = () => openAbilityModal(g, me);
+    btns.appendChild(b);
+  }
+  if (me.character === 'Gregor' && !me.abilityUsed && !me.abilityDisabled) {
+    const b = document.createElement('button');
+    b.className = 'btn primary';
+    b.textContent = '🛡️ Khiên bảo vệ';
+    b.onclick = () => doAction('use_ability');
+    btns.appendChild(b);
+  }
+  if (me.character === 'Allie' && !me.abilityUsed) {
+    const b = document.createElement('button');
+    b.className = 'btn primary';
+    b.textContent = '💚 Hồi đầy máu';
+    b.onclick = () => doAction('use_ability');
+    btns.appendChild(b);
+  }
+  if (me.hand && me.hand.length && hasMoved) {
+    me.hand.forEach(card => {
       const b = document.createElement('button');
-      b.className = 'btn primary';
-      b.textContent = '✨ Kỹ năng ' + me.character;
-      b.onclick = () => openAbilityModal(g, me);
+      b.className = 'btn';
+      b.style.background = '#1a4a3a';
+      b.textContent = '📜 ' + card.name;
+      b.onclick = () => {
+        if (confirm(`Dùng thẻ "${card.name}"?\n${card.desc}`)) {
+          doAction('use_hand_card', { cardId: card.id });
+        }
+      };
       btns.appendChild(b);
-    }
-    if (me.character === 'Gregor' && !me.abilityUsed && !me.abilityDisabled) {
-      const b = document.createElement('button');
-      b.className = 'btn primary';
-      b.textContent = '🛡️ Khiên bảo vệ';
-      b.onclick = () => doAction('use_ability');
-      btns.appendChild(b);
-    }
-    if (me.character === 'Allie' && !me.abilityUsed) {
-      const b = document.createElement('button');
-      b.className = 'btn primary';
-      b.textContent = '💚 Hồi đầy máu';
-      b.onclick = () => doAction('use_ability');
-      btns.appendChild(b);
-    }
+    });
   }
 }
 
@@ -295,7 +395,34 @@ function renderPendingChoices(g, me, container) {
   const pend = g.pending;
   const alive = g.players.filter(p => p.alive);
 
-  if (pend.type === 'hermit_give') {
+  if (pend.type === 'show_card') {
+    const card = pend.card;
+    const info = document.createElement('div');
+    info.style.cssText = 'width:100%;margin-bottom:10px;padding:10px;background:#16213e;border-radius:8px;';
+    const kind = pend.equipped ? '⚔️ TRANG BỊ (giữ trên người)' : '📜 THẺ TAY (có thể giữ & dùng sau)';
+    info.innerHTML = `<div style="color:#f5a623;font-weight:700;margin-bottom:6px">${kind}</div>
+      <div style="font-size:1rem;font-weight:600;margin-bottom:4px">${card.name}</div>
+      <div style="font-size:0.85rem;color:#ccc;line-height:1.4">${card.desc}</div>`;
+    container.appendChild(info);
+    if (pend.inHand) {
+      const useNow = document.createElement('button');
+      useNow.className = 'btn primary';
+      useNow.textContent = 'Dùng ngay';
+      useNow.onclick = () => doAction('resolve_pending', { useNow: true });
+      container.appendChild(useNow);
+      const keep = document.createElement('button');
+      keep.className = 'btn';
+      keep.textContent = 'Giữ trong tay';
+      keep.onclick = () => doAction('resolve_pending', {});
+      container.appendChild(keep);
+    } else {
+      const ok = document.createElement('button');
+      ok.className = 'btn primary';
+      ok.textContent = 'Đã xem';
+      ok.onclick = () => doAction('resolve_pending', {});
+      container.appendChild(ok);
+    }
+  } else if (pend.type === 'hermit_give') {
     if (pend.card) {
       const info = document.createElement('div');
       info.style.cssText = 'width:100%;font-size:0.8rem;color:#aaa;margin-bottom:6px';
@@ -354,8 +481,7 @@ function renderPendingChoices(g, me, container) {
     info.style.cssText = 'width:100%;margin-bottom:8px;color:#f5a623';
     info.textContent = `${card.name}: ${card.desc}`;
     container.appendChild(info);
-
-    const needsTarget = ['heal_any_2', 'heal_any_1', 'steal_equip', 'damage_2_any', 'damage_2_heal1', 'damage_or_heal', 'peek_character'].includes(card.effect);
+    const needsTarget = ['heal_any_2', 'heal_any_1', 'steal_equip', 'damage_2_any', 'damage_2_heal1', 'damage_or_heal', 'peek_character', 'blessing', 'first_aid', 'disenchant', 'banana', 'spider', 'bat', 'doll'].includes(card.effect);
     if (needsTarget) {
       alive.forEach(p => {
         if (card.effect === 'damage_or_heal') {
@@ -411,18 +537,18 @@ function renderPendingChoices(g, me, container) {
 
 function doMove() {
   doAction('move', {}, (res) => {
-    if (res.needChoose) {
-      openAreaChooseModal(state.game, res.rolls);
-    }
+    if (res.needChoose) openAreaChooseModal(state.game, res.rolls);
   });
 }
 
 function openAreaChooseModal(g, rolls) {
   const modal = $('#modal');
-  $('#modalTitle').textContent = `Xúc xắc ${rolls.d6}+${rolls.d4}=7 — Chọn bất kỳ vùng nào`;
+  $('#modalTitle').textContent = `Xúc xắc ${rolls.d6}+${rolls.d4}=7 — Chọn vùng khác`;
   const body = $('#modalBody');
   body.innerHTML = '';
+  const me = g.players.find(p => p.id === g.myId);
   g.areas.forEach(a => {
+    if (me && me.location === a.id) return;
     const btn = document.createElement('button');
     btn.className = 'choice-btn';
     btn.textContent = `${a.numbers.join('·')} ${a.name} (${a.desc || ''})`;
@@ -490,7 +616,6 @@ function doAction(action, data = {}, cb) {
 }
 
 $('#btnReveal').onclick = () => doAction('reveal');
-$('#btnBackLobby').onclick = () => location.reload();
 
 function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

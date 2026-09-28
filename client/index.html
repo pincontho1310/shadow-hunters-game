@@ -38,12 +38,16 @@
     </div>
     <button id="btnStart" class="btn primary full hidden">Bắt đầu game</button>
     <p id="waitMsg" class="hint">Chờ chủ phòng bắt đầu (tối thiểu 4 người)...</p>
+    <button id="btnLeaveRoom" class="btn full" style="background:#444;margin-top:8px">Thoát phòng</button>
   </div>
 
   <div id="game" class="screen hidden">
     <div class="game-header">
       <div id="turnInfo" class="turn-info">Lượt: —</div>
-      <button id="btnReveal" class="btn-sm danger">Tiết lộ nhân vật</button>
+      <div class="header-btns">
+        <button id="btnReveal" class="btn-sm danger">Tiết lộ nhân vật</button>
+        <button id="btnLeaveGame" class="btn-sm" style="background:#555">Thoát</button>
+      </div>
     </div>
     <div id="myCard" class="my-card">
       <div class="char-name" id="myCharName">?</div>
@@ -71,9 +75,29 @@
     <div id="winOverlay" class="win-overlay hidden">
       <h2>🎉 Kết thúc!</h2>
       <div id="winNames"></div>
-      <button id="btnBackLobby" class="btn primary">Về màn hình chính</button>
+      <button id="btnPlayAgain" class="btn primary">Chơi lại (cùng phòng)</button>
+      <button id="btnNewRoom" class="btn">Tạo / vào phòng mới</button>
+      <button id="btnLeaveAfter" class="btn" style="background:#444">Thoát về màn hình chính</button>
     </div>
   </div>
+
+  <div id="diceOverlay" class="dice-overlay hidden">
+    <div class="dice-box">
+      <div class="dice-label" id="diceLabel">Đang tung xúc xắc...</div>
+      <div class="dice-row">
+        <div class="die-wrap">
+          <div class="die-caption">D6</div>
+          <div class="die d6" id="die6">?</div>
+        </div>
+        <div class="die-wrap">
+          <div class="die-caption">D4</div>
+          <div class="die d4" id="die4">?</div>
+        </div>
+      </div>
+      <div class="dice-total" id="diceTotal"></div>
+    </div>
+  </div>
+
   <script src="game.js"></script>
 </body>
 </html>
